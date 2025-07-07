@@ -2,10 +2,8 @@ package attach;
 
 import com.sun.jdi.*;
 import com.sun.jdi.connect.*;
-import com.sun.jdi.request.BreakpointRequest;
-import com.sun.jdi.request.EventRequestManager;
 
-import extractors.CallStackExtractor;
+import extractors.StackFrameExtractor;
 
 import java.io.IOException;
 import java.net.ConnectException;
@@ -14,11 +12,11 @@ import java.util.concurrent.TimeUnit;
 
 public class JDIAttach {
 
-	// TODO divide the method extractCallStack and move it into the main to make more sense out of it
 	public static void main(String[] args) throws Exception {
 		// setting the variable that could become argument of the program
 		String host = "localhost";
-		String port = "5006";
+		String port1 = "5005";
+		String port2 = "5006";
 
 		String threadName = "main"; // name of the method creating the callStack
 
@@ -27,7 +25,40 @@ public class JDIAttach {
 		String methodName = "exec";
 		List<String> methodArguments = Arrays.asList("java.lang.String"); // can be null if there's no name repetition
 
-		extractCallStack(host, port, className, methodName, methodArguments, threadName);
+		VirtualMachine vm1 = attachToJVM(host, port1);
+		VirtualMachine vm2 = attachToJVM(host, port2);
+
+		// finding all the lines on the call stack to make an analysis on every line
+		// this permit to know changes on ObjectReferences between the call stack's lines
+		List<Method> allFramesMethods = getAllFramesMethods(vm1, className, methodName, methodArguments, threadName);
+		
+		Iterator<Method> it = allFramesMethods.iterator();
+		
+		addNextValidBreakpoint(vm2, it);
+		//extract the call stack and give the breakpoints to add
+		extractCallStack(vm2, threadName, it);
+	}
+
+	private static List<Method> getAllFramesMethods(VirtualMachine vm, String className, String methodName, List<String> methodArguments,
+			String threadName) throws IllegalConnectorArgumentsException, IOException, IncompatibleThreadStateException {
+		List<Method> allFramesMethods = new ArrayList<>();
+
+		// adding the breakpoint
+		BreakPointInstaller.instance.addBreakpoint(vm, className, methodName, methodArguments);
+
+		// Searching for the wanted thread
+		ThreadReference main = collectThread(threadName, vm);
+
+		// waiting for the thread to either finish or stop at a breakpoint
+		if (!encounterABreakpoint(main)) {
+			throw new IllegalStateException("Thread has not encounter a breakpoint");
+		}
+
+		for (StackFrame frame : main.frames()) {
+			allFramesMethods.add(frame.location().method());
+		}
+
+		return allFramesMethods;
 	}
 
 	/**
@@ -39,32 +70,45 @@ public class JDIAttach {
 	 * @param methodName      name of the searched method
 	 * @param methodArguments name of all arguments of the method in the declaration order
 	 * @param threadName      name of the thread to study
+	 * @param iterator 
 	 * @throws IOException                        when unable to attach to a VM
 	 * @throws IllegalConnectorArgumentsException if no connector socket can be used to attach to the VM
+	 * @throws IncompatibleThreadStateException
 	 */
-	private static void extractCallStack(String host, String port, String className, String methodName, List<String> methodArguments,
-			String threadName) throws IOException, IllegalConnectorArgumentsException {
-		VirtualMachine vm = attachToJVM(host, port);
-
-		// adding the breakpoint
-		addBreakpoint(vm, className, methodName, methodArguments);
+	private static void extractCallStack(VirtualMachine vm, String threadName, Iterator<Method> iterator)
+			throws IOException, IllegalConnectorArgumentsException, IncompatibleThreadStateException {
 
 		// Searching for the wanted thread
-		ThreadReference main = null;
-		for (ThreadReference thread : vm.allThreads()) {
-			if (thread.name().equals(threadName)) {
-				main = thread;
-				break;
+		ThreadReference main = collectThread(threadName, vm);
+
+		int i = 0;
+		while (encounterABreakpoint(main)) {
+			// extract the frame
+			while (i < main.frameCount()) {
+
+				System.out.println("---- Line " + i + " of the call stack ----");
+				//(new StackFrameExtractor()).extract(main.frames().get(i));
+				
+				i++;
 			}
+			//try adding the next possible breakpoint
+			addNextValidBreakpoint(vm, iterator);
 		}
-		if (main == null) {
-			throw new IllegalStateException("No thread nammed " + threadName + "was found");
+
+		vm.dispose(); // properly disconnecting
+	}
+
+	private static void addNextValidBreakpoint(VirtualMachine vm, Iterator<Method> iterator) {
+		while(iterator.hasNext() & BreakPointInstaller.instance.addBreakpoint(vm,iterator.next())) {
+			//TODO try removing this loop and only adding possible breakpoints
 		}
+	}
+
+	private static boolean encounterABreakpoint(ThreadReference main) {
 
 		// resuming the process of the main
 		main.resume();
 
-		// waiting for the thread to either finish or stop at a breakpoint
 		while (!(main.status() == ThreadReference.THREAD_STATUS_ZOMBIE || main.isAtBreakpoint())) {
 			try {
 				TimeUnit.MILLISECONDS.sleep(5);
@@ -72,20 +116,18 @@ public class JDIAttach {
 				// No need to take note of this exception
 			}
 		}
+		return main.isAtBreakpoint();
+	}
 
-		if (main.status() == ThreadReference.THREAD_STATUS_ZOMBIE) {
-			throw new IllegalStateException("Thread has not encounter a breakpoint");
+	private static ThreadReference collectThread(String threadName, VirtualMachine vm) {
+		for (ThreadReference thread : vm.allThreads()) {
+			if (thread.name().equals(threadName)) {
+				return thread;
+			}
 		}
+		// should not come here if the thread exists
+		throw new IllegalStateException("No thread nammed " + threadName + "was found");
 
-		// Parsing the call stack
-		try {
-			CallStackExtractor.extract(main.frames());
-		} catch (IncompatibleThreadStateException e) {
-			// Should not happen because we are normally at a breakpoint
-			throw new IllegalStateException("Thread should be at a breakpoint but isn't");
-		}
-
-		vm.dispose(); // properly disconnecting
 	}
 
 	/**
@@ -124,105 +166,6 @@ public class JDIAttach {
 			throw new IllegalStateException("Connection to the JVM refused, maybe check that the adresses are corresponding");
 		}
 
-	}
-
-	/**
-	 * Add a breakpoint at a specified method on the given VM
-	 * 
-	 * @param vm         the VM
-	 * @param className  the name of the class
-	 * @param methodName the name of the method
-	 */
-	public static void addBreakpoint(VirtualMachine vm, String className, String methodName) {
-		JDIAttach.addBreakpoint(vm, className, methodName, null);
-	}
-
-	/**
-	 * Add a breakpoint at a specified method on the given VM Precise the method argument type names in case there is multiple method having the same
-	 * name
-	 * 
-	 * @param vm              the VM
-	 * @param className       the name of the class where the method is situated
-	 * @param methodName      the name of the method
-	 * @param methodArguments name of all arguments type of the method in the declaration order
-	 */
-	public static void addBreakpoint(VirtualMachine vm, String className, String methodName, List<String> methodArguments) {
-		try {
-			// Getting the EventRequestManager of the VirtualMachine
-			EventRequestManager requestManager = vm.eventRequestManager();
-
-			// Getting the method, adapting the research depending of the amount of information given
-			Method method = findMethod(vm, className, methodName, methodArguments);
-
-			// Getting the location of the method
-			Location location = method.location();
-
-			// Creating the breakpoint at the wanted location
-			BreakpointRequest breakpointRequest = requestManager.createBreakpointRequest(location);
-			breakpointRequest.enable(); // activate the breakpoint
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
-	}
-
-	/**
-	 * Find a method matching the given characteristics in the Virtual Machine
-	 * 
-	 * @param vm              the Virtual Machine
-	 * @param className       the name of the class where the method is situated
-	 * @param methodName      name of the searched method
-	 * @param methodArguments name of all arguments type of the method in the declaration order
-	 * @return the method if one match
-	 * @throws ClassNotLoadedException if no method matches the characteristics
-	 */
-	private static Method findMethod(VirtualMachine vm, String className, String methodName, List<String> methodArguments)
-			throws ClassNotLoadedException {
-		// finding the class
-		List<ReferenceType> classes = vm.classesByName(className);
-		if (classes.isEmpty()) {
-			throw new IllegalArgumentException("Class not found : " + className);
-		}
-		ClassType classType = (ClassType) classes.get(0);
-
-		// getting all the methods with the searched name in the class
-		List<Method> allMethods = classType.methodsByName(methodName);
-
-		// if no method found throw an exception
-		if (allMethods.isEmpty()) {
-			throw new IllegalArgumentException("No method named " + methodName + " in class " + className);
-		}
-
-		// if no arguments given, either we only have one method found and that's fine
-		// or we have multiple results, we don't make a random choice, we just throw an exception
-		if (methodArguments == null) {
-			if (allMethods.size() != 1) {
-				throw new IllegalArgumentException("Multiple methods named " + methodName + " in class " + className);
-			}
-			return allMethods.get(0);
-		}
-
-		// if we have multiple methods and given arguments types, we search if one correspond
-		for (Method m : allMethods) {
-			List<Type> paramTypes = m.argumentTypes();
-			// if not the same number of types just pass this method
-			if (paramTypes.size() != methodArguments.size()) {
-				continue;
-			}
-			// starting on the hypothesis that we found the method, and trying to invalidate it
-			boolean matches = true;
-			for (int i = 0; i < paramTypes.size(); i++) {
-				if (!paramTypes.get(i).name().equals(methodArguments.get(i))) {
-					matches = false;
-					break;
-				}
-			}
-			// if we can't invalidate the method, then we found it
-			if (matches) {
-				return m;
-			}
-		}
-		// if we got here, then no method have been found
-		throw new IllegalArgumentException("No method named " + methodName + " in class " + className + " with argument types: " + methodArguments);
 	}
 
 }

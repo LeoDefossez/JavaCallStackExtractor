@@ -26,7 +26,11 @@ public class StackFrameExtractor {
 	 * By using its unique ID it should be possible to make a link to the one where
 	 * the parsing system has developed the search.
 	 */
-	private static Set<ObjectReference> visited = new HashSet<ObjectReference>();
+	private Set<ObjectReference> visited;
+	
+	public StackFrameExtractor() {
+		this.visited = new HashSet<ObjectReference>();
+	}
 
 	/**
 	 * extract a frame, by parsing the method signature, its arguments, and its
@@ -34,10 +38,10 @@ public class StackFrameExtractor {
 	 * 
 	 * @param frame the frame to extract
 	 */
-	public static void extract(StackFrame frame) {
-		extractMethod(frame);
-		extractArguments(frame);
-		extractReceiver(frame);
+	public void extract(StackFrame frame) {
+		this.extractMethod(frame);
+		this.extractArguments(frame);
+		this.extractReceiver(frame);
 	}
 
 	/**
@@ -45,7 +49,7 @@ public class StackFrameExtractor {
 	 * 
 	 * @param frame the frame to extract
 	 */
-	public static void extractMethod(StackFrame frame) {
+	public void extractMethod(StackFrame frame) {
 		Method method = frame.location().method();
 		System.out.println("Method signature: " + method.name() + "(" + String.join(",", method.argumentTypeNames()) + ")");
 	}
@@ -55,7 +59,7 @@ public class StackFrameExtractor {
 	 * 
 	 * @param frame the frame to extract
 	 */
-	public static void extractArguments(StackFrame frame) {
+	public void extractArguments(StackFrame frame) {
 		System.out.println("Method arguments values : ");
 
 		// getting the method associated to this frame
@@ -77,7 +81,7 @@ public class StackFrameExtractor {
 			// With this supposition being always true, we can just check if one have next
 			// and iterate in both
 			System.out.print(namesIterator.next() + " = ");
-			extractValueRecursive(argumentsValueIterator.next(), "");
+			this.extractValueRecursive(argumentsValueIterator.next(), "");
 		}
 
 	}
@@ -87,9 +91,9 @@ public class StackFrameExtractor {
 	 * 
 	 * @param frame the frame to extract
 	 */
-	public static void extractReceiver(StackFrame frame) {
+	public void extractReceiver(StackFrame frame) {
 		System.out.println("Method receiver : ");
-		extractValueRecursive(frame.thisObject(), "");
+		this.extractValueRecursive(frame.thisObject(), "");
 	}
 
 	/**
@@ -97,13 +101,13 @@ public class StackFrameExtractor {
 	 * @param value the value to extract
 	 * @param indent the indent to add to make human able to understand what happen //TODO should be removed after
 	 */ 
-	private static void extractValueRecursive(Value value, String indent) {
+	private void extractValueRecursive(Value value, String indent) {
 		if (value == null) {
 			System.out.println(indent + "null");
 		} else if (value instanceof PrimitiveValue) {
-			extractPrimitiveValue((PrimitiveValue) value, indent);
+			this.extractPrimitiveValue((PrimitiveValue) value, indent);
 		} else if (value instanceof ObjectReference) {
-			extractObjectReference((ObjectReference) value, indent);
+			this.extractObjectReference((ObjectReference) value, indent);
 		} else if (value instanceof VoidValue) {
 			// TODO
 			// implements this if needed
@@ -120,7 +124,7 @@ public class StackFrameExtractor {
 	 * @param value the primitiveValue to extract
 	 * @param indent the indent to add to make human able to understand what happen //TODO should be removed after
 	 */
-	private static void extractPrimitiveValue(PrimitiveValue value, String indent) {
+	private void extractPrimitiveValue(PrimitiveValue value, String indent) {
 		System.out.println(indent + value.type().name() + " = " + value.toString());
 	}
 
@@ -129,7 +133,7 @@ public class StackFrameExtractor {
 	 * @param value the ObjectReference to extract
 	 * @param indent the indent to add to make human able to understand what happen //TODO should be removed after
 	 */
-	private static void extractObjectReference(ObjectReference value, String indent) {
+	private void extractObjectReference(ObjectReference value, String indent) {
 		//TODO maybe we can add these object to visited ?
 		if (value instanceof StringReference) {
 			System.out.println(
@@ -146,15 +150,15 @@ public class StackFrameExtractor {
 			}
 			for (int i = 0; i < arrayValues.size(); i++) {
 				System.out.println(indent + "at: " + i + " = ");
-				extractValueRecursive(arrayValues.get(i), indent + "  ");
+				this.extractValueRecursive(arrayValues.get(i), indent + "  ");
 			}
 
 		} else if (value instanceof ClassObjectReference) {
 			// using reflectedType because it is said to be more precise than referenceType
-			extractAllFields(value, indent, ((ClassObjectReference) value).reflectedType());
+			this.extractAllFields(value, indent, ((ClassObjectReference) value).reflectedType());
 
 		} else {
-			extractAllFields(value, indent, value.referenceType());
+			this.extractAllFields(value, indent, value.referenceType());
 		}
 
 	}
@@ -165,12 +169,12 @@ public class StackFrameExtractor {
 	 * @param indent the indent to add to make human able to understand what happen //TODO should be removed after
 	 * @param type the reference type of the ObjectReference
 	 */
-	private static void extractAllFields(ObjectReference ref, String indent, ReferenceType type) {
-		if (visited.contains(ref)) {
+	private void extractAllFields(ObjectReference ref, String indent, ReferenceType type) {
+		if (this.visited.contains(ref)) {
 			System.out.println(indent + type.name() + "[ObjId:" + ref.uniqueID() + "]");
 			return;
 		}
-		visited.add(ref);
+		this.visited.add(ref);
 
 		System.out.println(indent + type.name() + " [ObjId:" + ref.uniqueID() + "] = ");
 
@@ -193,7 +197,7 @@ public class StackFrameExtractor {
 				// it's potential information but could also be noise
 				Value fieldValue = ref.getValue(field);
 				System.out.println(indent + field.name() + " = ");
-				extractValueRecursive(fieldValue, indent + "  ");
+				this.extractValueRecursive(fieldValue, indent + "  ");
 
 			} catch (IllegalArgumentException e) {
 				// TODO Some fields are not valid, how is that possible?
